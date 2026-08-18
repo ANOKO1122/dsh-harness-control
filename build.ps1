@@ -16,6 +16,10 @@ New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll `
     $src
 
+if ($LASTEXITCODE -ne 0) {
+    throw "Compilation failed with exit code $LASTEXITCODE"
+}
+
 if (Test-Path $out) {
     Write-Host "Built: $out"
 } else {
