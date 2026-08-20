@@ -6,6 +6,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Management;
 using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 namespace DeepSeekHarnessControl
@@ -45,6 +46,7 @@ namespace DeepSeekHarnessControl
         private Button btnRestart;
         private Button btnBrowse;
         private Button btnOpenWeb;
+        private Panel pnlPluginHost;
         private NotifyIcon notifyIcon;
         private System.Windows.Forms.Timer timerStatus;
         private bool _reallyExit;
@@ -52,9 +54,9 @@ namespace DeepSeekHarnessControl
         public MainForm()
         {
             Text = "DeepSeek Harness Control";
-            ClientSize = new Size(720, 420);
-            MinimumSize = new Size(720, 420);
-            MaximumSize = new Size(720, 420);
+            ClientSize = new Size(720, 560);
+            MinimumSize = new Size(720, 560);
+            MaximumSize = new Size(720, 560);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             StartPosition = FormStartPosition.CenterScreen;
@@ -111,7 +113,7 @@ namespace DeepSeekHarnessControl
                 }
                 using (var brush = new SolidBrush(Color.FromArgb(0x7A, 0x7A, 0x7A)))
                 {
-                    e.Graphics.TranslateTransform(16, 360);
+                    e.Graphics.TranslateTransform(16, 500);
                     e.Graphics.RotateTransform(-90);
                     e.Graphics.DrawString("FIELD ENGINEERING SYSTEM", new Font("Segoe UI", 7F), brush, PointF.Empty);
                 }
@@ -271,7 +273,11 @@ namespace DeepSeekHarnessControl
             cmbProfile.Width = 140;
             cmbProfile.Font = new Font("Microsoft YaHei UI", 9F);
             cmbProfile.TabIndex = 3;
-            cmbProfile.SelectedIndexChanged += (s, e) => UpdateInstruments();
+            cmbProfile.SelectedIndexChanged += (s, e) =>
+            {
+                UpdateInstruments();
+                LoadPlugins();
+            };
             pnlStage.Controls.Add(cmbProfile);
 
             var actionsCaption = new Label();
@@ -296,6 +302,50 @@ namespace DeepSeekHarnessControl
                 Color.FromArgb(0x8A, 0x8A, 0x8A), 448, 120, 120, 40, (s, e) => RestartHarness());
             btnRestart.TabIndex = 6;
             pnlStage.Controls.Add(btnRestart);
+
+            var pluginCaption = new Label();
+            pluginCaption.Text = "PLUGINS  /  插件管理";
+            pluginCaption.Font = new Font("Segoe UI", 7.5F);
+            pluginCaption.ForeColor = Muted;
+            pluginCaption.AutoSize = true;
+            pluginCaption.Location = new Point(24, 336);
+            body.Controls.Add(pluginCaption);
+
+            var btnRefreshPlugins = MakeButton("刷新", Color.FromArgb(0x2A, 0x2A, 0x2A), Color.White,
+                Color.FromArgb(0x8A, 0x8A, 0x8A), 500, 330, 84, 26, (s, e) => LoadPlugins());
+            body.Controls.Add(btnRefreshPlugins);
+
+            var pluginHeadName = new Label();
+            pluginHeadName.Text = "PLUGIN / 插件";
+            pluginHeadName.Font = new Font("Segoe UI", 7F, FontStyle.Bold);
+            pluginHeadName.ForeColor = Muted;
+            pluginHeadName.AutoSize = true;
+            pluginHeadName.Location = new Point(30, 358);
+            body.Controls.Add(pluginHeadName);
+
+            var pluginHeadAction = new Label();
+            pluginHeadAction.Text = "ACTION / 操作";
+            pluginHeadAction.Font = new Font("Segoe UI", 7F, FontStyle.Bold);
+            pluginHeadAction.ForeColor = Muted;
+            pluginHeadAction.AutoSize = true;
+            pluginHeadAction.Location = new Point(484, 358);
+            body.Controls.Add(pluginHeadAction);
+
+            pnlPluginHost = new Panel();
+            pnlPluginHost.SetBounds(24, 374, 560, 132);
+            pnlPluginHost.BackColor = Paper;
+            pnlPluginHost.AutoScroll = true;
+            body.Controls.Add(pnlPluginHost);
+
+            var pluginHint = new Label();
+            pluginHint.Text = "改动写入所选 profile 的 dsh.profile.bundles，重启 Harness 后生效。";
+            pluginHint.Font = new Font("Segoe UI", 7.5F);
+            pluginHint.ForeColor = Muted;
+            pluginHint.AutoSize = true;
+            pluginHint.Location = new Point(24, 510);
+            body.Controls.Add(pluginHint);
+
+            LoadPlugins();
 
             AcceptButton = btnStart;
         }
@@ -408,6 +458,228 @@ namespace DeepSeekHarnessControl
             {
                 lblPortState.Text = "PORT / --";
             }
+        }
+
+        private string ProfileDir()
+        {
+            string profile = cmbProfile != null && cmbProfile.SelectedItem != null
+                ? cmbProfile.SelectedItem.ToString()
+                : "web";
+            string dshHome = Environment.GetEnvironmentVariable("DSH_HOME");
+            if (String.IsNullOrEmpty(dshHome))
+            {
+                dshHome = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh");
+            }
+            return Path.Combine(dshHome, "profiles", profile);
+        }
+
+        private string ProfilePackagePath()
+        {
+            return Path.Combine(ProfileDir(), "package.json");
+        }
+
+        private Dictionary<string, object> ReadManifest(string path)
+        {
+            var ser = new JavaScriptSerializer();
+            return (Dictionary<string, object>)ser.DeserializeObject(File.ReadAllText(path));
+        }
+
+        private List<string> ReadDependencies(Dictionary<string, object> root)
+        {
+            var list = new List<string>();
+            try
+            {
+                var deps = root["dependencies"] as Dictionary<string, object>;
+                if (deps != null)
+                {
+                    foreach (string key in deps.Keys) list.Add(key);
+                }
+            }
+            catch
+            {
+            }
+            return list;
+        }
+
+        private List<string> ReadBundles(Dictionary<string, object> root)
+        {
+            var list = new List<string>();
+            try
+            {
+                var dsh = root["dsh"] as Dictionary<string, object>;
+                if (dsh == null) return list;
+                var profile = dsh["profile"] as Dictionary<string, object>;
+                if (profile == null) return list;
+                object bundlesObj;
+                if (profile.TryGetValue("bundles", out bundlesObj) && bundlesObj is object[])
+                {
+                    foreach (object b in (object[])bundlesObj)
+                    {
+                        if (b != null) list.Add(Convert.ToString(b));
+                    }
+                }
+            }
+            catch
+            {
+            }
+            return list;
+        }
+
+        private static bool ListContainsIgnoreCase(List<string> list, string value)
+        {
+            foreach (string item in list)
+            {
+                if (String.Equals(item, value, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        private void LoadPlugins()
+        {
+            if (pnlPluginHost == null || cmbProfile == null) return;
+            try
+            {
+                pnlPluginHost.Controls.Clear();
+                string path = ProfilePackagePath();
+                if (!File.Exists(path))
+                {
+                    SetStatus("未找到 profile package.json：" + path, Error);
+                    return;
+                }
+                var root = ReadManifest(path);
+                var deps = ReadDependencies(root);
+                var bundles = ReadBundles(root);
+
+                if (deps.Count == 0)
+                {
+                    var empty = new Label();
+                    empty.Text = "当前 profile 没有已安装的外部插件。";
+                    empty.ForeColor = Muted;
+                    empty.Font = new Font("Microsoft YaHei UI", 9F);
+                    empty.AutoSize = true;
+                    empty.Location = new Point(10, 12);
+                    pnlPluginHost.Controls.Add(empty);
+                    SetStatus("当前 profile 没有已安装的外部插件。", Muted);
+                    return;
+                }
+
+                int y = 0;
+                foreach (string dep in deps)
+                {
+                    bool enabled = ListContainsIgnoreCase(bundles, dep);
+                    pnlPluginHost.Controls.Add(BuildPluginRow(dep, enabled, y));
+                    y += 44;
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus("读取插件列表失败：" + ex.Message, Error);
+            }
+        }
+
+        private Panel BuildPluginRow(string plugin, bool enabled, int y)
+        {
+            var row = new Panel();
+            row.SetBounds(0, y, 556, 42);
+            row.BackColor = Color.White;
+            row.Cursor = Cursors.Hand;
+
+            var state = new Panel();
+            state.SetBounds(0, 0, 4, 42);
+            state.BackColor = enabled ? Signal : Color.FromArgb(0xC9, 0xC9, 0xC9);
+            row.Controls.Add(state);
+
+            var name = new Label();
+            name.Text = plugin;
+            name.Font = new Font("Consolas", 9F, FontStyle.Bold);
+            name.ForeColor = Ink;
+            name.AutoSize = true;
+            name.Location = new Point(16, 6);
+            row.Controls.Add(name);
+
+            var meta = new Label();
+            meta.Text = enabled ? "BUNDLE LAYER / ACTIVE" : "BUNDLE LAYER / STANDBY";
+            meta.Font = new Font("Segoe UI", 7F);
+            meta.ForeColor = enabled ? Muted : Color.FromArgb(0x9A, 0x9A, 0x9A);
+            meta.AutoSize = true;
+            meta.Location = new Point(16, 24);
+            row.Controls.Add(meta);
+
+            var toggle = MakeButton(
+                enabled ? "停用" : "启用",
+                enabled ? Color.FromArgb(0x2A, 0x2A, 0x2A) : Signal,
+                enabled ? Color.White : Ink,
+                enabled ? Color.FromArgb(0x8A, 0x8A, 0x8A) : Signal,
+                464, 8, 78, 26,
+                (s, e) => TogglePlugin(plugin, enabled));
+            row.Controls.Add(toggle);
+
+            row.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(Color.FromArgb(0xE0, 0xE0, 0xDE)))
+                {
+                    e.Graphics.DrawLine(pen, 0, 41, 556, 41);
+                }
+            };
+
+            return row;
+        }
+
+        private void TogglePlugin(string plugin, bool currentlyEnabled)
+        {
+            try
+            {
+                bool next = !currentlyEnabled;
+                SetBundleEnabled(plugin, next);
+                SetStatus("插件 " + plugin + (next ? " 已启用" : " 已停用") + "，重启 Harness 后生效。",
+                    next ? Online : Signal);
+                LoadPlugins();
+            }
+            catch (Exception ex)
+            {
+                SetStatus("更新插件状态失败：" + ex.Message, Error);
+            }
+        }
+
+        private void SetBundleEnabled(string plugin, bool enabled)
+        {
+            string path = ProfilePackagePath();
+            var root = ReadManifest(path);
+
+            var dsh = root["dsh"] as Dictionary<string, object>;
+            if (dsh == null)
+            {
+                dsh = new Dictionary<string, object>();
+                root["dsh"] = dsh;
+            }
+
+            var profile = dsh["profile"] as Dictionary<string, object>;
+            if (profile == null)
+            {
+                profile = new Dictionary<string, object>();
+                dsh["profile"] = profile;
+            }
+
+            var bundles = ReadBundles(root);
+            bool present = ListContainsIgnoreCase(bundles, plugin);
+            if (enabled && !present)
+            {
+                bundles.Add(plugin);
+            }
+            else if (!enabled && present)
+            {
+                for (int i = bundles.Count - 1; i >= 0; i--)
+                {
+                    if (String.Equals(bundles[i], plugin, StringComparison.OrdinalIgnoreCase))
+                    {
+                        bundles.RemoveAt(i);
+                    }
+                }
+            }
+
+            profile["bundles"] = bundles;
+            var ser = new JavaScriptSerializer();
+            File.WriteAllText(path, ser.Serialize(root));
         }
 
         private void OpenWebUI()

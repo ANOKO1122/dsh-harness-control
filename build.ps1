@@ -9,11 +9,13 @@ if (-not (Test-Path $csc)) {
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $out = Join-Path $root 'bin\DeepSeekHarnessControl.exe'
 $src = Join-Path $root 'harness-app\Program.cs'
+$fx = Split-Path -Parent $csc
 
 New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
 
 & $csc /nologo /target:winexe /out:$out `
     /r:System.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll `
+    /r:$fx\System.Web.Extensions.dll `
     $src
 
 if ($LASTEXITCODE -ne 0) {
